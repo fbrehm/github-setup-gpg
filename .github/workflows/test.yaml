@@ -1,0 +1,51 @@
+---
+name: Test
+
+# yamllint disable-line rule:truthy
+on:
+  push:
+  pull_request:
+
+jobs:
+
+  # ###########################
+  # test:
+  #   if: github.event_name != 'pull_request' || !contains('OWNER,MEMBER,COLLABORATOR', github.event.pull_request.author_association)
+  #   name: Test Python${{ matrix.python_version }}
+  #   runs-on: ubuntu-latest
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       python_version: [ '3.6', '3.7', '3.8', '3.9', '3.10', '3.11', '3.12' ]
+  #   container: python:${{ matrix.python_version }}
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: fbrehm/prepare-debian-container@main
+  #     - id: action_with_all
+  #       uses: ./.github/..
+  #       with:
+  #         install_pytest: true
+  #         install_linter_tools: true
+
+  ###########################
+  linter:
+    if: github.event_name != 'pull_request' || !contains('OWNER,MEMBER,COLLABORATOR', github.event.pull_request.author_association)
+    runs-on: ubuntu-latest
+    name: Executing Linters
+    container: python:3.12
+    # needs:
+    #   - test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: fbrehm/prepare-debian-container@main
+        with:
+          manage_locales: false
+      - name: "Installing PIP modules and linter tools"
+        uses: fbrehm/github-install-pip-modules@main
+        with:
+          install_linter_tools: true
+      - name: Execute Yamllint
+        shell: bash
+        run: yamllint action.yaml .github
+
+# vim: et tabstop=2 expandtab shiftwidth=2 softtabstop=2 list
