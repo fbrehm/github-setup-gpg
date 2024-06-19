@@ -1,0 +1,16 @@
+*.swp
+*.old
+*.pyc
+*.egg
+*-stamp
+*.bak
+*.mo
+build
+trace
+MANIFEST
+.idea
+.cache
+.env
+tmp/*
+venv*/*
+
