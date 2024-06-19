@@ -1,0 +1,179 @@
+---
+
+name: Preparing GPG
+author: Frank Brehm
+description: 'This action prepares gpg for signing files without entering a password'
+
+inputs:
+  public_key:
+    description: "This is the exported public GPG key"
+    required: true
+  private_key:
+    description: "This is the exported private GPG key"
+    required: true
+  key_password:
+    description: "This is the password of the imported private GPG key"
+    required: true
+  password_file:
+    description: "The file containing the password of the private GPG key."
+    default: '.private/uhu.txt'
+  key_id:
+    description: "The ID of the private GPG key."
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: 'Importing public GPG key'
+      env:
+        GPG_PASSWORD_FILE: ${{ inputs.password_file }}
+      shell: bash
+      run: |
+
+        all_stuff_there='y'
+
+        if [[ -z "${{ inputs.public_key }}" ]] ; then
+            all_stuff_there='n'
+            echo "::warning title=setup-gpg::No public GPG key given."
+        fi
+
+        if [[ -z "${{ inputs.private_key }}" ]] ; then
+            all_stuff_there='n'
+            echo "::warning title=setup-gpg::No private GPG key given."
+        fi
+
+        if [[ -z "${{ inputs.key_password }}" ]] ; then
+            all_stuff_there='n'
+            echo "::warning title=setup-gpg::No password for the private GPG key given."
+        fi
+
+        if [[ -z "${{ inputs.key_id }}" ]] ; then
+            all_stuff_there='n'
+            echo "::warning title=setup-gpg::No Id of the GPK key given."
+        fi
+
+        if [[ "${all_stuff_there}" != 'y' ]]; then
+
+            if [[ -e "${{ inputs.password_file }}" ]] ; then
+                echo -e "\nRemoving '${{ inputs.password_file }}' ..."
+                rm -rfv "${{ inputs.password_file }}"
+            fi
+
+        else
+
+            echo "Importing public GPG key ..."
+            echo "${{ inputs.public_key }}" | gpg --import
+            echo -e "\nThe imported public keys:"
+            gpg --list-public-keys
+            echo "<-- EOF"
+
+            GPG_VERSION=$( gpg --version | head -n 1 | sed -e 's/[^0-9]*//' )
+            echo -e "\nVersion of GPG: '${GPG_VERSION}'"
+
+            GPG_MAJOR_VERSION=$( echo "${GPG_VERSION}" | awk -F. '{print $1}' )
+            GPG_MINOR_VERSION=$( echo "${GPG_VERSION}" | awk -F. '{print $2}' )
+            GPG_HAS_PINENTRY="y"
+            if [[ "${GPG_MAJOR_VERSION}" -lt "2" ]] ; then
+                GPG_HAS_PINENTRY="n"
+            elif [[ "${GPG_MAJOR_VERSION}" == "2" ]] ; then
+                if [[ "${GPG_MINOR_VERSION}" -lt "1" ]] ; then
+                    GPG_HAS_PINENTRY="n"
+                fi
+            fi
+            echo "GPG has pinentry mode: ${GPG_HAS_PINENTRY}"
+
+            echo -e "\nImporting private GPG key ..."
+            if [[ "${GPG_HAS_PINENTRY}" == "y" ]] ; then
+                echo "${{ inputs.private_key }}" | gpg --import --batch --pinentry-mode loopback --passphrase "${{ inputs.key_password }}"
+            else
+                echo "${{ inputs.private_key }}" | gpg --import --batch --passphrase "${{ inputs.key_password }}"
+            fi
+
+            echo -e "\nThe imported private keys:"
+            gpg --list-secret-keys
+            echo "<-- EOF"
+
+            PASSWORD_FILE_REL="${GPG_PASSWORD_FILE:-.private/uhu.txt}"
+            PASSWORD_FILE_ABS=$( readlink --canonicalize-missing "${PASSWORD_FILE_REL}" )
+            PASSWORD_DIR=$( dirname "${PASSWORD_FILE_ABS}" )
+            if [[ ! -d "${PASSWORD_DIR}" ]] ; then
+                echo -e "\nCreating directory '${PASSWORD_DIR}' ..."
+                mkdir --parents --verbose --mode 0700 "${PASSWORD_DIR}"
+            fi
+            echo -e "\nCreating password file '${PASSWORD_FILE_ABS}' ..."
+            echo "${{ inputs.key_password }}" > "${PASSWORD_FILE_ABS}"
+            chmod --verbose 0600 "${PASSWORD_FILE_ABS}"
+            echo
+            ls -l --directory --color=auto "${PASSWORD_DIR}" "${PASSWORD_FILE_ABS}"
+
+            echo -e "\nCreating GnuPG config ..."
+            PASSWORD_FILE_REL="${GPG_PASSWORD_FILE:-.private/uhu.txt}"
+            PASSWORD_FILE_ABS=$( readlink --canonicalize-missing "${PASSWORD_FILE_REL}" )
+            GPG_DIR="${HOME}/.gnupg"
+            GPG_CONF="${GPG_DIR}/gpg.conf"
+            GPG_VERSION=$( gpg --version | head -n 1 | sed -e 's/[^0-9]*//' )
+            GPG_MAJOR_VERSION=$( echo "${GPG_VERSION}" | awk -F. '{print $1}' )
+            GPG_MINOR_VERSION=$( echo "${GPG_VERSION}" | awk -F. '{print $2}' )
+            GPG_HAS_PINENTRY="y"
+            if [[ "${GPG_MAJOR_VERSION}" -lt "2" ]] ; then
+                GPG_HAS_PINENTRY="n"
+            elif [[ "${GPG_MAJOR_VERSION}" == "2" ]] ; then
+                if [[ "${GPG_MINOR_VERSION}" -lt "1" ]] ; then
+                    GPG_HAS_PINENTRY="n"
+                fi
+            fi
+            if [[ ! -d "${GPG_DIR}" ]] ; then
+                echo -e "\nCreating directory '${GPG_DIR}' ..."
+                mkdir --parents --verbose --mode 0700 "${GPG_DIR}"
+            fi
+            if [[ ! -f "${GPG_CONF}" ]] ; then
+                echo -e "\nCreating file '${GPG_CONF}' ..."
+                touch "${GPG_CONF}"
+                chmod --verbose 0600 "${GPG_CONF}"
+            fi
+
+            printf "\nSetting default Key-Id "
+            if grep -q -P '^\s*default-key\s' "${GPG_CONF}" ; then
+                echo "by substituting old value ..."
+                sed -i -e "s/[ 	]*default-key[ 	].*/default-key ${{ inputs.key_id }}/i" "${GPG_CONF}"
+            else
+                echo "by setting new value ..."
+                echo "default-key ${{ inputs.key_id }}" >> "${GPG_CONF}"
+            fi
+
+            printf "\nSetting batch mode "
+            if grep -q -P '^\s*batch\s*$' "${GPG_CONF}" ; then
+                echo "- already set."
+            else
+                echo "by setting mode."
+                echo "batch" >> "${GPG_CONF}"
+            fi
+
+            if [[ "${GPG_HAS_PINENTRY}" == "y" ]] ; then
+                printf "\nSetting Pinentry mode "
+                if grep -q -P '^\s*pinentry-mode\s' "${GPG_CONF}" ; then
+                    echo "by substituting old value ..."
+                    sed -i -e "s/[ 	]*pinentry-mode[ 	].*/pinentry-mode loopback/i" "${GPG_CONF}"
+                else
+                    echo "by setting new value ..."
+                    echo "pinentry-mode loopback" >> "${GPG_CONF}"
+                fi
+            fi
+
+            printf "\nSetting passphrase-file "
+            if grep -q -P '^\s*passphrase-file\s' "${GPG_CONF}" ; then
+                echo "by substituting old value ..."
+                sed -i -e "s/[ 	]*passphrase-file[ 	].*/passphrase-file ${PASSWORD_FILE_ABS}/i" "${GPG_CONF}"
+            else
+                echo "by setting new value ..."
+                echo "passphrase-file ${PASSWORD_FILE_ABS}" >> "${GPG_CONF}"
+            fi
+
+            echo -e "\nModified '${GPG_CONF}':"
+            grep -P -v '^\s*(#|$)' "${GPG_CONF}"
+            echo "<-- EOF"
+
+        fi
+
+
+# vim: et tabstop=2 expandtab shiftwidth=2 softtabstop=2 list
